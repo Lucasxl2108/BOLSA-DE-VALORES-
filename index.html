@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analisador de Ações da B3</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Estilo para o loader */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+
+<body class="bg-gray-900 text-gray-200 min-h-screen flex flex-col items-center p-4 sm:p-6">
+
+    <div class="w-full max-w-5xl mx-auto">
+        <!-- Cabeçalho -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold text-white">Analisador de Ações <span class="text-blue-400">B3</span></h1>
+            <p class="text-gray-400 mt-2">Consulte dados históricos e em tempo real de ações listadas na B3.</p>
+        </header>
+
+        <!-- Formulário de Filtro -->
+        <div class="bg-gray-800 p-6 rounded-xl shadow-lg mb-8">
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 items-end">
+                <!-- Filtro Ticker -->
+                <div class="md:col-span-2">
+                    <label for="ticker" class="block text-sm font-medium text-gray-300 mb-1">Código da Ação (Ticker)</label>
+                    <input type="text" id="ticker" name="ticker" placeholder="Ex: PETR4, VALE3, ITUB4" class="w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-white placeholder-gray-400 focus:ring-blue-500 focus:border-blue-500 transition">
+                </div>
+                <!-- Filtro Data de Início -->
+                <div>
+                    <label for="start_date" class="block text-sm font-medium text-gray-300 mb-1">Data de Início</label>
+                    <input type="date" id="start_date" name="start_date" class="w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-blue-500 focus:border-blue-500 transition">
+                </div>
+                <!-- Filtro Data de Fim -->
+                <div>
+                    <label for="end_date" class="block text-sm font-medium text-gray-300 mb-1">Data de Fim</label>
+                    <input type="date" id="end_date" name="end_date" class="w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-blue-500 focus:border-blue-500 transition">
+                </div>
+            </div>
+            <!-- Botão de Busca -->
+            <div class="mt-5 text-center">
+                <button id="search-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-8 rounded-lg transition-all duration-300 w-full sm:w-auto shadow-md">
+                    <svg class="w-5 h-5 mr-2 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    Buscar Dados
+                </button>
+            </div>
+        </div>
+
+        <!-- Container de Resultados -->
+        <div id="results-container" class="hidden">
+            <!-- Dados em Tempo Real -->
+            <div id="live-data-container" class="mb-8"></div>
+            
+            <!-- Dados Históricos -->
+            <div id="historical-data-container"></div>
+        </div>
+        
+        <!-- Mensagens de Status (Erro/Loading) -->
+        <div id="status-message" class="text-center p-8">
+             <p class="text-gray-500">Insira um código de ação e um período para começar.</p>
+        </div>
+
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const tickerInput = document.getElementById('ticker');
+            const startDateInput = document.getElementById('start_date');
+            const endDateInput = document.getElementById('end_date');
+            const searchBtn = document.getElementById('search-btn');
+            
+            const resultsContainer = document.getElementById('results-container');
+            const liveDataContainer = document.getElementById('live-data-container');
+            const historicalDataContainer = document.getElementById('historical-data-container');
+            const statusMessage = document.getElementById('status-message');
+
+            // Define as datas padrão (hoje e 30 dias atrás)
+            const today = new Date();
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(today.getDate() - 30);
+            
+            endDateInput.value = today.toISOString().split('T')[0];
+            startDateInput.value = thirtyDaysAgo.toISOString().split('T')[0];
+            
+            // Permite buscar com a tecla Enter
+            tickerInput.addEventListener('keypress', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    searchBtn.click();
+                }
+            });
+
+            searchBtn.addEventListener('click', async () => {
+                const ticker = tickerInput.value.trim();
+                const startDate = startDateInput.value;
+                const endDate = endDateInput.value;
+
+                if (!ticker || !startDate || !endDate) {
+                    showStatus('Por favor, preencha todos os campos.', 'error');
+                    return;
+                }
+
+                // Exibe o loader
+                showStatus('<div class="loader mx-auto"></div><p class="mt-4">Buscando dados... Isso pode levar alguns segundos.</p>', 'loading');
+                resultsContainer.classList.add('hidden');
+
+                try {
+                    // Busca os dados em paralelo
+                    const [liveResponse, historicalResponse] = await Promise.all([
+                        fetch(`/api/get-data?ticker=${ticker}`),
+                        fetch(`/api/get-historical-data?ticker=${ticker}&start_date=${startDate}&end_date=${endDate}`)
+                    ]);
+
+                    const liveData = await liveResponse.json();
+                    const historicalData = await historicalResponse.json();
+
+                    // Verifica erros em ambas as respostas
+                    if (liveData.error || historicalData.error) {
+                        const errorMessage = liveData.error || historicalData.error || "Ocorreu um erro desconhecido.";
+                        throw new Error(errorMessage);
+                    }
+
+                    displayLiveData(liveData);
+                    displayHistoricalData(historicalData, ticker);
+                    
+                    statusMessage.innerHTML = '';
+                    statusMessage.classList.add('hidden');
+                    resultsContainer.classList.remove('hidden');
+
+                } catch (error) {
+                    console.error('Erro ao buscar dados:', error);
+                    showStatus(`Erro: ${error.message}`, 'error');
+                }
+            });
+
+            function showStatus(message, type = 'info') {
+                resultsContainer.classList.add('hidden');
+                statusMessage.classList.remove('hidden');
+                let colorClass = 'text-gray-400';
+                if (type === 'error') {
+                    colorClass = 'text-red-400';
+                }
+                statusMessage.innerHTML = `<div class="bg-gray-800 rounded-lg p-8"><div class="${colorClass}">${message}</div></div>`;
+            }
+            
+            // Função para renderizar os dados em tempo real
+            function displayLiveData(data) {
+                const price = parseFloat(data.price);
+                const change = parseFloat(data.change);
+                const percentChange = parseFloat(data.percent_change.replace('%', ''));
+
+                const isPositive = change >= 0;
+                const colorClass = isPositive ? 'text-green-400' : 'text-red-400';
+                const sign = isPositive ? '+' : '';
+                const arrow = isPositive ? '▲' : '▼';
+                
+                liveDataContainer.innerHTML = `
+                    <h2 class="text-2xl font-bold mb-4 text-white">${data.company_name} (${data.ticker})</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="bg-gray-800 p-6 rounded-lg">
+                            <h3 class="text-sm font-medium text-gray-400">Preço Atual</h3>
+                            <p class="text-3xl font-semibold text-white">R$ ${price.toFixed(2)}</p>
+                        </div>
+                        <div class="bg-gray-800 p-6 rounded-lg">
+                            <h3 class="text-sm font-medium text-gray-400">Variação (R$)</h3>
+                            <p class="text-3xl font-semibold ${colorClass}">${sign}${change.toFixed(2)} ${arrow}</p>
+                        </div>
+                        <div class="bg-gray-800 p-6 rounded-lg">
+                            <h3 class="text-sm font-medium text-gray-400">Variação (%)</h3>
+                            <p class="text-3xl font-semibold ${colorClass}">${sign}${percentChange.toFixed(2)}%</p>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Função para renderizar a tabela de dados históricos
+            function displayHistoricalData(data, ticker) {
+                if (!data || data.length === 0) {
+                     historicalDataContainer.innerHTML = `
+                        <h2 class="text-2xl font-bold mb-4 text-white">Dados Históricos para ${ticker.toUpperCase()}</h2>
+                        <div class="bg-gray-800 p-6 rounded-lg text-center text-gray-400">
+                            Nenhum dado histórico encontrado para o período selecionado.
+                        </div>
+                     `;
+                     return;
+                }
+            
+                let tableRows = data.map(row => `
+                    <tr class="border-b border-gray-700 hover:bg-gray-700/50">
+                        <td class="p-4">${row.date}</td>
+                        <td class="p-4">${row.open}</td>
+                        <td class="p-4">${row.high}</td>
+                        <td class="p-4">${row.low}</td>
+                        <td class="p-4">${row.close}</td>
+                        <td class="p-4">${row.adj_close}</td>
+                        <td class="p-4">${row.volume}</td>
+                    </tr>
+                `).join('');
+
+                historicalDataContainer.innerHTML = `
+                    <h2 class="text-2xl font-bold mb-4 text-white">Dados Históricos</h2>
+                    <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm text-left text-gray-300">
+                                <thead class="text-xs text-gray-400 uppercase bg-gray-700">
+                                    <tr>
+                                        <th scope="col" class="p-4">Data</th>
+                                        <th scope="col" class="p-4">Abertura</th>
+                                        <th scope="col" class="p-4">Alta</th>
+                                        <th scope="col" class="p-4">Baixa</th>
+                                        <th scope="col" class="p-4">Fechamento</th>
+                                        <th scope="col" class="p-4">Fech. Ajust.</th>
+                                        <th scope="col" class="p-4">Volume</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${tableRows}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>
+
